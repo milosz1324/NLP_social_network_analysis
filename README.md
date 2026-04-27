@@ -78,7 +78,7 @@ python3 -m src.preprocessing \
   --end-date 2001-03-31
 ```
 
-Argumenty `--start-date` i `--end-date` są opcjonalne. Jeśli zostaną podane, preprocessing zachowa tylko wiadomości z datą w wybranym zakresie, włącznie z datą początkową i końcową. Daty muszą istnieć w kalendarzu, np. dla końca czerwca należy podać `2001-06-30`, a nie `2001-06-31`. Dla analizy konkretnego okresu najlepiej podać jako `--input` pełny plik `data/raw/emails.csv`, a nie próbkę stworzoną przez `--nrows`.
+Argumenty `--start-date` i `--end-date` są opcjonalne. Jeśli zostaną podane, preprocessing zachowa tylko wiadomości z datą w wybranym zakresie, włącznie z datą początkową i końcową. Dla analizy konkretnego okresu najlepiej podać jako `--input` pełny plik `data/raw/emails.csv`, a nie próbkę stworzoną przez `--nrows`.
 
 Zbudowanie grafu `sender -> recipient`:
 
