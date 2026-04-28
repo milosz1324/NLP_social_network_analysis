@@ -12,12 +12,70 @@ from src.alias_resolution import resolve_people
 
 OUTPUT_DIR = Path("outputs/tables")
 
+# ---------------------------
+# NORMALIZATION HELPERS
+# ---------------------------
+def normalize_enron_name(name: str) -> str:
+    """Handle Enron-style names like 'gorny/hou' → 'gorny'"""
+    name = name.lower().strip()
+
+    if "/" in name:
+        name = name.split("/")[0]
+
+    return name.strip()
+
+
 def to_surname(name: str) -> str:
     parts = name.strip().lower().split()
     if len(parts) == 0:
         return name
-    return parts[-1]  # surname only
+    return parts[-1]
 
+
+def is_valid_person(name: str) -> bool:
+    """Lightweight filter (NOT too aggressive!)"""
+    name = name.strip().lower()
+
+    if len(name) < 3:
+        return False
+
+    bad_words = {
+        "subject", "corporation", "email", "message",
+        "please", "thanks", "regards", "attached",
+        "forwarded", "original", "sent"
+    }
+
+    if name in bad_words:
+        return False
+
+    return True
+
+
+# ---------------------------
+# SAFE GRAPH EXPORT
+# ---------------------------
+def safe_graph_to_df(graph):
+    rows = []
+    for source, target, data in graph.edges(data=True):
+        rows.append({
+            "source": source,
+            "target": target,
+            "weight": data.get("weight", 1),
+            "relation_source": data.get("relation_source", ""),
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=["source", "target", "weight", "relation_source"])
+
+    return pd.DataFrame(rows).sort_values(
+        by=["weight", "source", "target"],
+        ascending=[False, True, True],
+    )
+
+
+# ---------------------------
+# CLI
+# ---------------------------
 def parse_args():
     parser = argparse.ArgumentParser(description="Enron NLP + SNA pipeline")
 
@@ -38,6 +96,38 @@ def parse_args():
     return parser.parse_args()
 
 
+def filter_enron_only(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only emails where sender AND recipients are from enron.com"""
+
+    def is_enron(email: str) -> bool:
+        return isinstance(email, str) and "@enron.com" in email.lower()
+
+    # sender musi być enron
+    df = df[df["sender"].apply(is_enron)]
+
+    # recipients: zostaw tylko enronowych
+    def filter_recipients(value):
+        if pd.isna(value):
+            return ""
+
+        recipients = [
+            r.strip()
+            for r in str(value).split(",")
+            if is_enron(r)
+        ]
+
+        return ", ".join(recipients)
+
+    df["recipients"] = df["recipients"].apply(filter_recipients)
+
+    # usuń wiersze bez recipientów
+    df = df[df["recipients"].str.len() > 0]
+
+    return df
+
+# ---------------------------
+# MAIN
+# ---------------------------
 def main():
     args = parse_args()
 
@@ -48,12 +138,43 @@ def main():
 
     print(f"Loaded rows: {len(df)}")
 
+    # ---------------------------
+    # PREPROCESSING
+    # ---------------------------
     df = preprocess_emails(df)
 
+    df = filter_enron_only(df)
+
+    print(f"After Enron filter: {len(df)} rows")
+
+    # ---------------------------
+    # NER EXTRACTION
+    # ---------------------------
     df["mentioned_people"] = df["clean_body"].apply(
         lambda x: clean_people(extract_people(x))
     )
 
+    # ---------------------------
+    # NORMALIZE (Enron-specific)
+    # ---------------------------
+    df["mentioned_people"] = df["mentioned_people"].apply(
+        lambda lst: [normalize_enron_name(name) for name in lst]
+    )
+
+    # ---------------------------
+    # FILTER
+    # ---------------------------
+    df["mentioned_people"] = df["mentioned_people"].apply(
+        lambda lst: [name for name in lst if is_valid_person(name)]
+    )
+
+    # DEBUG (important)
+    print("\nSample mentioned_people:")
+    print(df["mentioned_people"].head(5).to_list())
+
+    # ---------------------------
+    # ALIAS RESOLUTION
+    # ---------------------------
     all_names = set(
         name
         for sublist in df["mentioned_people"]
@@ -62,20 +183,21 @@ def main():
 
     alias_map = resolve_people(all_names)
 
-    # 6. APPLY NORMALIZATION + SURNAME REDUCTION
+    # ---------------------------
+    # SURNAME REDUCTION
+    # ---------------------------
     df["mentioned_people"] = df["mentioned_people"].apply(
-        lambda lst: [
-            to_surname(alias_map[name])
+        lambda lst: list({
+            to_surname(alias_map.get(name, name))
             for name in lst
-        ]
+        })
     )
 
-    df["mentioned_people"] = df["mentioned_people"].apply(
-        lambda lst: list(set(lst))
-    )
+    print("NER completed (clean + normalize + alias + surname)")
 
-    print("NER completed (with alias + surname normalization)")
-
+    # ---------------------------
+    # GRAPHS
+    # ---------------------------
     metadata_graph = build_metadata_graph(df)
     ner_graph = build_ner_graph(df)
 
@@ -89,13 +211,16 @@ def main():
     print("Nodes:", ner_graph.number_of_nodes())
     print("Edges:", ner_graph.number_of_edges())
 
+    # ---------------------------
+    # SAVE
+    # ---------------------------
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    metadata_df = graph_to_edges_df(metadata_graph)
+    metadata_df = safe_graph_to_df(metadata_graph)
     metadata_path = OUTPUT_DIR / "metadata_edges.csv"
     metadata_df.to_csv(metadata_path, index=False)
 
-    ner_df = graph_to_edges_df(ner_graph)
+    ner_df = safe_graph_to_df(ner_graph)
     ner_path = OUTPUT_DIR / "ner_edges.csv"
     ner_df.to_csv(ner_path, index=False)
 
@@ -103,5 +228,9 @@ def main():
     print("Metadata edges:", metadata_path)
     print("NER edges:", ner_path)
 
+
+# ---------------------------
+# ENTRY
+# ---------------------------
 if __name__ == "__main__":
     main()
