@@ -97,9 +97,11 @@ python3 -m src.analysis --edges outputs/tables/metadata_edges.csv --ranking-outp
 
 ## Pipeline z NER i modelem językowym spaCy en_core_web_sm
 W katalogu root uruchomić:
+```bash
 python3 run_pipeline.py --nrows 1000
+```
 
-Lub bez podania --nrows, domyślne nrows to 100
+Bez podania --nrows, domyślnie nrows to 100
 
 ## Autorzy
 

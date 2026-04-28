@@ -2,3 +2,4 @@ pandas>=2.0
 networkx>=3.0
 matplotlib>=3.7
 spacy>=3.7
+rapidfuzz>=3.0
