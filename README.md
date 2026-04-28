@@ -19,6 +19,7 @@ o informacje wydobyte metodami NLP/NER z treści wiadomości.
 
 ```text
 .
+├── run_pipeline.py
 ├── data/
 │   ├── raw/          # oryginalne pliki danych, np. CSV z Enron Email Corpus
 │   └── processed/    # oczyszczone lub pośrednie dane
@@ -44,6 +45,7 @@ o informacje wydobyte metodami NLP/NER z treści wiadomości.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m spacy download en_core_web_sm
 ```
 
 ## Dane
@@ -92,6 +94,12 @@ Analiza metryk grafu:
 python3 -m src.analysis --edges outputs/tables/metadata_edges.csv --ranking-output outputs/tables/metadata_node_metrics.csv --summary-output outputs/tables/metadata_graph_summary.csv
 ```
 
+
+## Pipeline z NER i modelem językowym spaCy en_core_web_sm
+W katalogu root uruchomić:
+python3 run_pipeline.py --nrows 1000
+
+Lub bez podania --nrows, domyślne nrows to 100
 
 ## Autorzy
 
