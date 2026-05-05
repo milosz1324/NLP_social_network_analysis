@@ -1,79 +1,86 @@
-from collections.abc import Iterable
 from pathlib import Path
 import argparse
-
 import networkx as nx
 import pandas as pd
 
 from src.config import PROCESSED_DATA_DIR, TABLES_DIR
 
 
+def clean_email(email: str) -> str:
+    if not isinstance(email, str):
+        return ""
+    return email.strip().lower()
+
+
 def _split_recipients(value: object) -> list[str]:
     if pd.isna(value):
         return []
 
-    return [
-        item.strip().lower()
-        for item in str(value).replace(";", ",").split(",")
-        if item.strip()
-    ]
+    parts = str(value).replace(";", ",").split(",")
+
+    cleaned = []
+    for item in parts:
+        item = clean_email(item)
+
+        if not item:
+            continue
+
+        if "@" not in item:
+            continue
+
+        cleaned.append(item)
+
+    return cleaned
 
 
 def build_metadata_graph(
     df: pd.DataFrame,
     sender_col: str = "sender",
     recipients_col: str = "recipients",
-    ) -> nx.DiGraph:
-    """Build a weighted directed graph from sender-recipient metadata."""
-    graph = nx.DiGraph()
+) -> nx.DiGraph:
+
+    G = nx.DiGraph()
 
     for _, row in df.iterrows():
-        sender = str(row.get(sender_col, "")).strip().lower()
-        if not sender:
+
+        sender = clean_email(row.get(sender_col, ""))
+        if not sender or "@" not in sender:
             continue
 
-        for recipient in _split_recipients(row.get(recipients_col)):
-            if graph.has_edge(sender, recipient):
-                graph[sender][recipient]["weight"] += 1
+        recipients = _split_recipients(row.get(recipients_col))
+
+        for recipient in recipients:
+
+            if recipient == sender:
+                continue
+
+            relation = row.get("relation_type", "other")
+
+            if G.has_edge(sender, recipient):
+                G[sender][recipient]["weight"] += 1
             else:
-                graph.add_edge(sender, recipient, weight=1, relation_source="metadata")
+                G.add_edge(
+                    sender,
+                    recipient,
+                    weight=1,
+                    relation_source="metadata",
+                    relation_type=relation,
+                )
 
-    return graph
-
-
-def add_mentioned_people_edges(
-    graph: nx.DiGraph,
-    sender: str,
-    mentioned_people: Iterable[str],
-    ) -> None:
-    """Add sender-to-mentioned-person edges extracted from message content."""
-    sender = sender.strip().lower()
-    if not sender:
-        return
-
-    for person in mentioned_people:
-        target = person.strip().lower()
-        if not target or target == sender:
-            continue
-
-        if graph.has_edge(sender, target):
-            graph[sender][target]["weight"] += 1
-        else:
-            graph.add_edge(sender, target, weight=1, relation_source="ner")
+    return G
 
 
-def graph_to_edges_df(graph: nx.DiGraph) -> pd.DataFrame:
-    """Convert graph edges to a dataframe that can be saved as CSV."""
-    rows = []
-    for source, target, data in graph.edges(data=True):
-        rows.append(
-            {
-                "source": source,
-                "target": target,
-                "weight": data.get("weight", 1),
-                "relation_source": data.get("relation_source", ""),
-            }
-        )
+def graph_to_edges_df(G: nx.DiGraph) -> pd.DataFrame:
+    rows = [
+        {
+            "source": s,
+            "target": t,
+            "weight": d.get("weight", 1),
+            "relation_source": d.get("relation_source", ""),
+            "relation_type": d.get("relation_type", "unknown"),
+        }
+        for s, t, d in G.edges(data=True)
+    ]
 
     return pd.DataFrame(rows).sort_values(
         by=["weight", "source", "target"],
@@ -81,84 +88,40 @@ def graph_to_edges_df(graph: nx.DiGraph) -> pd.DataFrame:
     )
 
 
-def print_graph_summary(graph: nx.DiGraph, top_n: int = 10) -> None:
-    """Print compact graph statistics and strongest edges."""
-    print(f"Nodes: {graph.number_of_nodes()}")
-    print(f"Edges: {graph.number_of_edges()}")
+def parse_args():
+    parser = argparse.ArgumentParser()
 
-    if graph.number_of_edges() == 0:
-        return
-
-    print(f"\nTop {top_n} edges by weight:")
-    top_edges = sorted(
-        graph.edges(data=True),
-        key=lambda edge: edge[2].get("weight", 1),
-        reverse=True,
-    )[:top_n]
-
-    for source, target, data in top_edges:
-        print(f"- {source} -> {target}: weight={data.get('weight', 1)}")
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build a sender-to-recipient metadata graph from preprocessed emails."
-    )
     parser.add_argument(
         "--input",
         type=Path,
         default=PROCESSED_DATA_DIR / "emails_preprocessed.csv",
-        help="Path to preprocessed emails CSV.",
     )
+
     parser.add_argument(
         "--output",
         type=Path,
         default=TABLES_DIR / "metadata_edges.csv",
-        help="Path where graph edges CSV should be saved.",
     )
-    parser.add_argument(
-        "--sender-col",
-        default="sender",
-        help="Name of the sender column.",
-    )
-    parser.add_argument(
-        "--recipients-col",
-        default="recipients",
-        help="Name of the recipients column.",
-    )
-    parser.add_argument(
-        "--top-n",
-        type=int,
-        default=10,
-        help="Number of strongest edges to print.",
-    )
-    parser.add_argument(
-        "--no-save",
-        action="store_true",
-        help="Only print graph summary without saving edges.",
-    )
+
     return parser.parse_args()
 
 
-def main() -> None:
+def main():
     args = parse_args()
 
-    if not args.input.exists():
-        raise FileNotFoundError(f"Input file not found: {args.input}")
-
     df = pd.read_csv(args.input)
-    graph = build_metadata_graph(
-        df,
-        sender_col=args.sender_col,
-        recipients_col=args.recipients_col,
-    )
-    print_graph_summary(graph, top_n=args.top_n)
 
-    if not args.no_save:
-        edges_df = graph_to_edges_df(graph)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        edges_df.to_csv(args.output, index=False)
-        print(f"\nSaved graph edges to: {args.output}")
+    G = build_metadata_graph(df)
+
+    print("Nodes:", G.number_of_nodes())
+    print("Edges:", G.number_of_edges())
+
+    df_out = graph_to_edges_df(G)
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    df_out.to_csv(args.output, index=False)
+
+    print("Saved:", args.output)
 
 
 if __name__ == "__main__":
