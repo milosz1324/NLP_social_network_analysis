@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.preprocessing import preprocess_emails
+from src.preprocessing import filter_enron_only, preprocess_emails
 from src.ner import extract_people, clean_people
 from src.graph_builder import build_metadata_graph, graph_to_edges_df
 from src.graph_ner_builder import build_ner_graph
@@ -95,35 +95,6 @@ def parse_args():
 
     return parser.parse_args()
 
-
-def filter_enron_only(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep only emails where sender AND recipients are from enron.com"""
-
-    def is_enron(email: str) -> bool:
-        return isinstance(email, str) and "@enron.com" in email.lower()
-
-    # sender musi być enron
-    df = df[df["sender"].apply(is_enron)]
-
-    # recipients: zostaw tylko enronowych
-    def filter_recipients(value):
-        if pd.isna(value):
-            return ""
-
-        recipients = [
-            r.strip()
-            for r in str(value).split(",")
-            if is_enron(r)
-        ]
-
-        return ", ".join(recipients)
-
-    df["recipients"] = df["recipients"].apply(filter_recipients)
-
-    # usuń wiersze bez recipientów
-    df = df[df["recipients"].str.len() > 0]
-
-    return df
 
 # ---------------------------
 # MAIN
