@@ -115,6 +115,105 @@ def parse_args():
     parser.add_argument("--input", type=Path, default=PROCESSED_DATA_DIR / "emails_sample.csv")
     parser.add_argument("--output", type=Path, default=PROCESSED_DATA_DIR / "emails_preprocessed.csv")
     parser.add_argument("--message-col", default="message")
+
+
+def validate_date_window(start_date: str | None, end_date: str | None) -> None:
+    """Fail early when CLI date arguments are invalid."""
+    parsed_start = None
+    parsed_end = None
+
+    if start_date:
+        try:
+            parsed_start = pd.to_datetime(start_date, utc=True)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid --start-date: {start_date}. Use a valid date, e.g. 2001-01-01."
+            ) from exc
+
+    if end_date:
+        try:
+            parsed_end = pd.to_datetime(end_date, utc=True)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid --end-date: {end_date}. Use a valid date, e.g. 2001-06-30."
+            ) from exc
+
+    if parsed_start is not None and parsed_end is not None and parsed_start > parsed_end:
+        raise ValueError("--start-date must be earlier than or equal to --end-date.")
+
+
+def filter_enron_only(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only emails where sender AND recipients are from enron.com"""
+    required_columns = {"sender", "recipients"}
+    missing_columns = required_columns - set(df.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(
+            f"Missing required column(s): {missing}. "
+            "Run preprocess_emails() before filter_enron_only()."
+        )
+
+    def is_enron(email: str) -> bool:
+        return isinstance(email, str) and "@enron.com" in email.lower()
+
+    # sender must be from enron company
+    df = df[df["sender"].apply(is_enron)].copy()
+
+    # recipients: zostaw tylko enronowych
+    def filter_recipients(value):
+        if pd.isna(value):
+            return ""
+
+        recipients = [
+            r.strip()
+            for r in str(value).split(",")
+            if is_enron(r)
+        ]
+
+        return ", ".join(recipients)
+
+    df["recipients"] = df["recipients"].apply(filter_recipients)
+
+    # delete rows without recipients
+    df = df[df["recipients"].str.len() > 0]
+
+    return df
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Parse raw Enron email messages into metadata and cleaned text."
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=PROCESSED_DATA_DIR / "emails_sample.csv",
+        help="Path to CSV with a raw message column.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=PROCESSED_DATA_DIR / "emails_preprocessed.csv",
+        help="Path where the parsed CSV should be saved.",
+    )
+    parser.add_argument(
+        "--message-col",
+        default="message",
+        help="Name of the column containing raw email messages.",
+    )
+    parser.add_argument(
+        "--start-date",
+        help="Keep only messages on or after this date, e.g. 2001-10-01.",
+    )
+    parser.add_argument(
+        "--end-date",
+        help="Keep only messages on or before this date, e.g. 2001-12-31.",
+    )
+    parser.add_argument(
+        "--drop-raw-message",
+        action="store_true",
+        help="Do not keep the original raw message column in the output CSV.",
+    )
     return parser.parse_args()
 
 
@@ -123,6 +222,20 @@ def main():
 
     df = pd.read_csv(args.input)
     print("Loaded:", len(df))
+    print(f"Loaded rows: {len(df)}", flush=True)
+    print("Parsing email headers and bodies...", flush=True)
+    processed = preprocess_emails(df, message_col=args.message_col)
+    processed = filter_enron_only(processed)
+    print(f"After filtering to Enron-only emails: {len(processed)}", flush=True)
+    before_filter = len(processed)
+    date_filter = args.start_date and args.end_date
+    if date_filter:
+        print("Applying date filter...", flush=True)
+        processed = filter_by_date_window(
+            processed,
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
 
     processed = preprocess_emails(df, args.message_col)
 
@@ -131,8 +244,12 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     processed.to_csv(args.output, index=False)
 
-    print("Saved:", args.output)
-    print("Rows:", len(processed))
+    print(f"Rows parsed: {before_filter}")
+    if date_filter: 
+        print(f"Rows after date filter: {len(processed)}")
+    print(f"Columns: {', '.join(processed.columns)}")
+    print(f"Saved preprocessed emails to: {args.output}")
+
 
 
 if __name__ == "__main__":

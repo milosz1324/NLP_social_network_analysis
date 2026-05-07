@@ -4,7 +4,7 @@ from collections import Counter
 
 import pandas as pd
 
-from src.preprocessing import preprocess_emails
+from src.preprocessing import filter_enron_only, preprocess_emails
 from src.ner import extract_people, clean_people
 from src.graph_builder import build_metadata_graph
 from src.graph_ner_builder import build_ner_graph
