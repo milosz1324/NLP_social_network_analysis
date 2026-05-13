@@ -3,6 +3,8 @@ import pandas as pd
 import networkx as nx
 import re
 
+from src.config import TABLES_DIR
+
 
 def normalize(name: str) -> str:
     if not isinstance(name, str):
@@ -21,7 +23,7 @@ def normalize(name: str) -> str:
     return name
 
 
-def load_graph(edges_path: str) -> nx.DiGraph:
+def load_graph(edges_path: str | Path) -> nx.DiGraph:
     df = pd.read_csv(edges_path)
 
     G = nx.DiGraph()
@@ -69,8 +71,8 @@ def find_hidden_brokers(meta_scores, ner_scores, top_n=20):
 
 
 def main():
-    metadata_path = "outputs/tables/metadata_edges.csv"
-    ner_path = "outputs/tables/ner_edges.csv"
+    metadata_path = TABLES_DIR / "metadata_edges.csv"
+    ner_path = TABLES_DIR / "ner_edges.csv"
 
     print("Loading graphs...")
     G_meta = load_graph(metadata_path)
@@ -86,7 +88,7 @@ def main():
     print("\n=== HIDDEN BROKERS ===")
     print(hidden.to_string(index=False))
 
-    out = Path("outputs/tables/hidden_brokers.csv")
+    out = TABLES_DIR / "hidden_brokers.csv"
     hidden.to_csv(out, index=False)
 
     print(f"\nSaved to: {out}")

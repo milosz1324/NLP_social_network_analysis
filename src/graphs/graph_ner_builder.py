@@ -3,6 +3,8 @@ import argparse
 import pandas as pd
 import networkx as nx
 
+from src.config import TABLES_DIR
+
 
 def canonicalize(name: str) -> str:
     if not isinstance(name, str):
@@ -88,7 +90,7 @@ def main():
     parser.add_argument(
         "--output",
         type=Path,
-        default="outputs/tables/ner_edges.csv"
+        default=TABLES_DIR / "ner_edges.csv"
     )
 
     args = parser.parse_args()

@@ -236,13 +236,12 @@ def main():
     if args.drop_raw_message and args.message_col in processed.columns:
         processed = processed.drop(columns=[args.message_col])
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)   
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     processed.to_csv(args.output, index=False)
 
     print(f"Rows after Enron filter (before optional date filter): {rows_after_enron}")
     print(f"Columns: {', '.join(processed.columns)}")
     print(f"Saved preprocessed emails to: {args.output}")
-
 
 
 if __name__ == "__main__":

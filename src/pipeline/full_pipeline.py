@@ -4,11 +4,11 @@ from collections import Counter
 
 import pandas as pd
 
-from src.preprocessing import filter_enron_only, preprocess_emails
-from src.ner import extract_people, clean_people
-from src.graph_builder import build_metadata_graph
-from src.graph_ner_builder import build_ner_graph
-from src.relation_classifier import classify_relation
+from src.preprocess.preprocessing import filter_enron_only, preprocess_emails
+from src.nlp.ner import extract_people, clean_people
+from src.graphs.graph_builder import build_metadata_graph
+from src.graphs.graph_ner_builder import build_ner_graph
+from src.nlp.relation_classifier import classify_relation
 
 OUTPUT_DIR = Path("outputs/tables")
 
@@ -40,30 +40,6 @@ def is_valid_person(name: str) -> bool:
     }
 
     return name not in bad
-
-
-def filter_enron_only(df: pd.DataFrame) -> pd.DataFrame:
-    def is_enron(x):
-        return isinstance(x, str) and "@enron.com" in x.lower()
-
-    df = df[df["sender"].apply(is_enron)].copy()
-
-    def filter_recipients(val):
-        if pd.isna(val):
-            return ""
-
-        recs = [
-            r.strip()
-            for r in str(val).split(",")
-            if is_enron(r)
-        ]
-
-        return ",".join(recs)
-
-    df.loc[:, "recipients"] = df["recipients"].apply(filter_recipients)
-    df = df[df["recipients"].str.len() > 0]
-
-    return df
 
 
 def safe_graph_to_df(graph):
