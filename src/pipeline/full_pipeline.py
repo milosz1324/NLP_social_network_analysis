@@ -65,6 +65,12 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, default="data/raw/emails.csv")
     parser.add_argument("--nrows", type=int, default=1000)
+    parser.add_argument(
+        "--processed-output",
+        type=Path,
+        default=Path("data/processed/emails_with_ner.csv"),
+        help="Path for preprocessed emails enriched with relation_type and mentioned_people.",
+    )
     return parser.parse_args()
 
 
@@ -113,6 +119,10 @@ def main():
     print(Counter(all_people).most_common(20))
 
     print("NER completed (clean + normalize)")
+
+    args.processed_output.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(args.processed_output, index=False)
+    print("Enriched emails:", args.processed_output)
 
     metadata_graph = build_metadata_graph(df)
     ner_graph = build_ner_graph(df)
