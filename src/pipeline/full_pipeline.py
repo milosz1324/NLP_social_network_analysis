@@ -1,14 +1,27 @@
 import argparse
+import time
 from pathlib import Path
 from collections import Counter
 
 import pandas as pd
+from tqdm import tqdm
 
 from src.preprocess.preprocessing import filter_enron_only, preprocess_emails
-from src.nlp.ner import extract_people, clean_people
+from src.nlp.ner import extract_people_batch
 from src.graphs.graph_builder import build_metadata_graph
 from src.graphs.graph_ner_builder import build_ner_graph
 from src.nlp.relation_classifier import classify_relation
+
+
+def _step(label: str) -> float:
+    print(f"\n{'='*55}")
+    print(f"  {label}")
+    print(f"{'='*55}")
+    return time.time()
+
+
+def _done(t0: float) -> None:
+    print(f"  done in {time.time() - t0:.1f}s")
 
 OUTPUT_DIR = Path("outputs/tables")
 
@@ -76,78 +89,75 @@ def parse_args():
 
 def main():
     args = parse_args()
+    pipeline_start = time.time()
 
+    # ------------------------------------------------------------------
+    t = _step(f"[1/6] Loading CSV  (nrows={args.nrows or 'all'})")
     df = pd.read_csv(args.input)
-
     if args.nrows > 0:
         df = df.sample(n=args.nrows, random_state=42).reset_index(drop=True)
+    print(f"  Rows loaded: {len(df):,}")
+    _done(t)
 
-    print(f"Loaded rows: {len(df)}")
-
+    # ------------------------------------------------------------------
+    t = _step("[2/6] Preprocessing emails (parse headers, clean body)")
     df = preprocess_emails(df)
     df = filter_enron_only(df)
+    print(f"  Rows after Enron filter: {len(df):,}")
+    _done(t)
 
-    print(f"After Enron filter: {len(df)} rows")
+    # ------------------------------------------------------------------
+    t = _step("[3/6] Rule-based relation tagging")
+    tqdm.pandas(desc="classify_relation", unit="email")
+    df["relation_type"] = df["clean_body"].progress_apply(classify_relation)
+    print("\n  Relation type counts:")
+    for label, cnt in df["relation_type"].value_counts().items():
+        print(f"    {label}: {cnt:,}")
+    _done(t)
 
-    df["relation_type"] = df["clean_body"].apply(classify_relation)
-
-    print("\nRelation types:")
-    print(df["relation_type"].value_counts())
-
-    df["mentioned_people"] = df["clean_body"].apply(
-        lambda x: clean_people(extract_people(x))
-    )
-
-    df["mentioned_people"] = df["mentioned_people"].apply(
-        lambda lst: [normalize_person(p) for p in lst]
-    )
-
-    df["mentioned_people"] = df["mentioned_people"].apply(
-        lambda lst: [p for p in lst if is_valid_person(p)]
-    )
-
+    # ------------------------------------------------------------------
+    t = _step("[4/6] NER — extracting mentioned people (spaCy batch)")
+    raw_mentions = extract_people_batch(df["clean_body"].fillna("").tolist())
+    df["mentioned_people"] = [
+        [p for p in (normalize_person(x) for x in lst) if is_valid_person(p)]
+        for lst in raw_mentions
+    ]
     total_mentions = df["mentioned_people"].apply(len).sum()
-    print("\nTotal detected people mentions:", total_mentions)
-
-    print("\nNon-empty examples:")
-    print(df[df["mentioned_people"].str.len() > 0][["mentioned_people"]].head(10))
-
     all_people = [p for row in df["mentioned_people"] for p in row]
+    print(f"  Total mentions: {total_mentions:,}")
+    print(f"  Unique people:  {len(set(all_people)):,}")
+    print(f"  Top 10: {Counter(all_people).most_common(10)}")
+    _done(t)
 
-    print("\nUnique people found:", len(set(all_people)))
-    print("\nTop mentioned people:")
-    print(Counter(all_people).most_common(20))
-
-    print("NER completed (clean + normalize)")
-
+    # ------------------------------------------------------------------
+    t = _step("[5/6] Saving enriched emails")
     args.processed_output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.processed_output, index=False)
-    print("Enriched emails:", args.processed_output)
+    print(f"  Saved: {args.processed_output}")
+    _done(t)
 
+    # ------------------------------------------------------------------
+    t = _step("[6/6] Building graphs and saving edge CSVs")
     metadata_graph = build_metadata_graph(df)
     ner_graph = build_ner_graph(df)
 
-    print("\n=== GRAPH SUMMARY ===")
-
-    print("\n[Metadata Graph]")
-    print("Nodes:", metadata_graph.number_of_nodes())
-    print("Edges:", metadata_graph.number_of_edges())
-
-    print("\n[NER Graph]")
-    print("Nodes:", ner_graph.number_of_nodes())
-    print("Edges:", ner_graph.number_of_edges())
+    print(f"  Metadata graph — nodes: {metadata_graph.number_of_nodes():,}  edges: {metadata_graph.number_of_edges():,}")
+    print(f"  NER graph      — nodes: {ner_graph.number_of_nodes():,}  edges: {ner_graph.number_of_edges():,}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
     metadata_path = OUTPUT_DIR / "metadata_edges.csv"
     ner_path = OUTPUT_DIR / "ner_edges.csv"
-
     safe_graph_to_df(metadata_graph).to_csv(metadata_path, index=False)
     safe_graph_to_df(ner_graph).to_csv(ner_path, index=False)
+    print(f"  Saved: {metadata_path}")
+    print(f"  Saved: {ner_path}")
+    _done(t)
 
-    print("\n=== FILES SAVED ===")
-    print("Metadata edges:", metadata_path)
-    print("NER edges:", ner_path)
+    # ------------------------------------------------------------------
+    total = time.time() - pipeline_start
+    print(f"\n{'='*55}")
+    print(f"  Pipeline complete in {total:.1f}s ({total/60:.1f} min)")
+    print(f"{'='*55}\n")
 
 
 if __name__ == "__main__":

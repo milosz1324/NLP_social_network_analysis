@@ -9,7 +9,9 @@ from typing import Any
 import pandas as pd
 
 from src.config import PROCESSED_DATA_DIR, TABLES_DIR
+from src.nlp.groq_client import call_groq
 from src.nlp.ollama_client import call_ollama
+from src.nlp.together_client import call_together
 from src.nlp.relation_context import (
     canonicalize_person,
     collect_contexts,
@@ -77,9 +79,9 @@ def parse_llm_json(raw_response: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return parse_label_from_text(raw_response)
 
-    relation_type_value = parsed.get("relation_type", "niejednoznaczna")
+    relation_type_value = parsed.get("relation_type", "update")
     if isinstance(relation_type_value, dict):
-        relation_type_value = relation_type_value.get("type", "niejednoznaczna")
+        relation_type_value = relation_type_value.get("type", "update")
 
     relation_type = str(relation_type_value).strip()
     if relation_type not in RELATION_LABELS:
@@ -111,13 +113,13 @@ def parse_label_from_text(raw_response: str) -> dict[str, Any]:
         return {
             "relation_type": matches[0],
             "confidence": 0.35,
-            "evidence": "Etykieta odczytana z odpowiedzi tekstowej modelu.",
+            "evidence": "Label extracted from raw model response.",
         }
 
     return {
-        "relation_type": "niejednoznaczna",
+        "relation_type": "update",
         "confidence": 0.0,
-        "evidence": "Model nie zwrocil jednoznacznego poprawnego JSON.",
+        "evidence": "Model did not return valid JSON — defaulted to update.",
     }
 
 
@@ -130,6 +132,9 @@ def classify_top_edges(
     max_messages: int,
     body_chars: int,
     dry_run: bool = False,
+    provider: str = "ollama",
+    groq_api_key: str | None = None,
+    together_api_key: str | None = None,
 ) -> pd.DataFrame:
     rows = []
 
@@ -159,6 +164,12 @@ def classify_top_edges(
                 "evidence": "Dry run: prompt prepared, LLM not called.",
             }
             raw_response = ""
+        elif provider == "groq":
+            raw_response = call_groq(prompt, model=model, timeout=timeout, api_key=groq_api_key)
+            parsed = parse_llm_json(raw_response)
+        elif provider == "together":
+            raw_response = call_together(prompt, model=model, timeout=timeout, api_key=together_api_key)
+            parsed = parse_llm_json(raw_response)
         else:
             raw_response = call_ollama(prompt, model=model, host=host, timeout=timeout)
             parsed = parse_llm_json(raw_response)
@@ -221,6 +232,22 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Prepare contexts and output rows without calling the local LLM.",
     )
+    parser.add_argument(
+        "--provider",
+        default="ollama",
+        choices=["ollama", "groq", "together"],
+        help="LLM provider: 'ollama' (local), 'groq', or 'together'.",
+    )
+    parser.add_argument(
+        "--groq-api-key",
+        default=None,
+        help="Groq API key. Falls back to GROQ_API_KEY environment variable.",
+    )
+    parser.add_argument(
+        "--together-api-key",
+        default=None,
+        help="Together AI API key. Falls back to TOGETHER_API_KEY environment variable.",
+    )
     return parser.parse_args()
 
 
@@ -243,6 +270,9 @@ def main() -> None:
         max_messages=args.max_messages,
         body_chars=args.body_chars,
         dry_run=args.dry_run,
+        provider=args.provider,
+        groq_api_key=args.groq_api_key,
+        together_api_key=args.together_api_key,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
